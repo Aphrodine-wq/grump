@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+
+const { execFileSync } = require("child_process");
+const path = require("path");
+const fs = require("fs");
+const os = require("os");
+
+const BINARY_NAME = process.platform === "win32" ? "grump.exe" : "grump";
+const binaryPath = path.join(__dirname, BINARY_NAME);
+
+if (!fs.existsSync(binaryPath)) {
+  console.error(
+    "Error: grump binary not found. The postinstall script may have failed."
+  );
+  console.error("Try reinstalling: npm install -g @grump/cli");
+  process.exit(1);
+}
+
+try {
+  const result = execFileSync(binaryPath, process.argv.slice(2), {
+    stdio: "inherit",
+    env: process.env,
+    cwd: process.cwd(),
+  });
+} catch (err) {
+  if (err.status !== null) {
+    process.exit(err.status);
+  }
+  process.exit(1);
+}

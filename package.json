@@ -1,0 +1,32 @@
+{
+  "name": "@grump/cli",
+  "version": "2.0.0",
+  "description": "AI-powered coding assistant CLI built on Ollama",
+  "bin": {
+    "grump": "bin/grump"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js",
+    "build": "bash scripts/build.sh"
+  },
+  "files": [
+    "bin/",
+    "scripts/install.js"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aphrodine-wq/grump.git"
+  },
+  "keywords": [
+    "cli",
+    "ai",
+    "coding-assistant",
+    "ollama",
+    "code-generation"
+  ],
+  "author": "James Walton",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16"
+  }
+}

@@ -1,0 +1,219 @@
+{
+  "project": "G-Rump-CLI (BU-CLI)",
+  "branchName": "ralph/stability-and-polish",
+  "description": "Critical bug fixes, race condition elimination, reliability hardening, and polish for production-quality stability",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Fix spinner ticker goroutine double-close panic",
+      "description": "As a user, I need the spinner ticker goroutine to never panic from a double-close on the stopTicker channel.",
+      "acceptanceCriteria": [
+        "In agent.go Run(), replace the raw 'stopTicker' channel with a sync.Once-guarded close pattern to prevent double-close panics",
+        "The stopTicker channel close at line ~326 (on first text token) and the fallback close at line ~344 must both be safe to call regardless of order",
+        "Remove the select/default pattern around the second close and use sync.Once instead",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Implemented"
+    },
+    {
+      "id": "US-002",
+      "title": "Serialize concurrent tool output display",
+      "description": "As a user, I need tool call output to not interleave when multiple tools run concurrently.",
+      "acceptanceCriteria": [
+        "In agent.go executeTool(), wrap the ui.PrintToolCall() and ui.PrintToolResult()/ui.PrintToolError() calls in a shared mutex so concurrent tool goroutines don't interleave terminal output",
+        "Use the existing permMu mutex or add a dedicated displayMu sync.Mutex field on Agent",
+        "Permission prompts (which already hold permMu) should not deadlock with the display mutex",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Implemented"
+    },
+    {
+      "id": "US-003",
+      "title": "Add cancellable context to piped input handler",
+      "description": "As a user, I need to be able to Ctrl+C out of piped input operations.",
+      "acceptanceCriteria": [
+        "In handlePipedInput in cmd/root.go, replace context.Background() with a context that listens for SIGINT/SIGTERM",
+        "Use signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM) to create the cancellable context",
+        "Pass this context to ag.Run() so the user can cancel piped operations",
+        "Add 'syscall' to imports if not already present",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Implemented"
+    },
+    {
+      "id": "US-004",
+      "title": "Fix search_web ignoring http.NewRequest error",
+      "description": "As a developer, I need the search_web tool to properly handle the http.NewRequest error instead of ignoring it.",
+      "acceptanceCriteria": [
+        "In internal/tools/fetch.go ToolSearchWeb(), change 'req, _ := http.NewRequest(...)' to 'req, err := http.NewRequest(...)'",
+        "If err is not nil, return an error: 'return \"\", fmt.Errorf(\"failed to create search request: %v\", err)'",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Implemented"
+    },
+    {
+      "id": "US-005",
+      "title": "Add atomic session save to prevent corruption",
+      "description": "As a user, I need session saves to be atomic so a crash during save doesn't corrupt my session file.",
+      "acceptanceCriteria": [
+        "In internal/session/session.go Save(), write to a temporary file first (same directory, .tmp suffix), then rename it to the final path",
+        "Use os.Rename() which is atomic on most filesystems",
+        "If the temp write fails, return the error without leaving a partial file",
+        "If os.Rename fails, attempt to clean up the temp file",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Implemented"
+    },
+    {
+      "id": "US-006",
+      "title": "Cache token estimation to avoid O(n) per turn",
+      "description": "As a user, I need long conversations to stay responsive by not re-estimating all message tokens every turn.",
+      "acceptanceCriteria": [
+        "Add a 'cachedContextTokens int' and 'cachedMsgCount int' field to the Agent struct in agent.go",
+        "In the Run() loop where tokens.EstimateMessages is called, check if len(a.messages) == a.cachedMsgCount; if so, use the cached value",
+        "When new messages are appended, only estimate tokens for the new messages and add to the cached total",
+        "When messages are pruned (CompactToTokens), reset the cache by calling tokens.EstimateMessages on the remaining messages",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Implemented"
+    },
+    {
+      "id": "US-007",
+      "title": "Add grep context lines support (-B/-A flags)",
+      "description": "As a user, I need the grep tool to support showing context lines around matches, like grep -B and -A.",
+      "acceptanceCriteria": [
+        "Add 'before' and 'after' optional string parameters to the grep tool definition in tools.Definitions() with descriptions 'Number of lines to show before each match' and 'Number of lines to show after each match'",
+        "In execGrep in tools.go, parse before/after as integers (default 0)",
+        "When before or after > 0, include the surrounding lines in the output with '--' separators between non-contiguous groups",
+        "Cap before and after at 10 lines each to prevent excessive output",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Implemented"
+    },
+    {
+      "id": "US-008",
+      "title": "Add concurrent tool goroutine pool limit",
+      "description": "As a user, I need a limit on concurrent tool execution goroutines to prevent resource exhaustion.",
+      "acceptanceCriteria": [
+        "In agent.go Run(), when executing tool calls concurrently (the wg/goroutine loop), add a semaphore channel to limit concurrency to at most 5 goroutines",
+        "Create a 'sem := make(chan struct{}, 5)' before the loop, acquire before each goroutine starts (sem <- struct{}{}), release when done (<-sem in defer)",
+        "If there are 5 or fewer tool calls, behavior is unchanged (all run concurrently)",
+        "If there are more than 5, the excess waits for a slot",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Implemented"
+    },
+    {
+      "id": "US-009",
+      "title": "Add /retry command to re-send the last user message",
+      "description": "As a user, when the AI gives a bad response, I want to quickly retry my last message without retyping it.",
+      "acceptanceCriteria": [
+        "Add /retry command to handleCommand in cmd/root.go",
+        "Finds the last user message in ag.Messages() (skipping system messages)",
+        "Removes the last assistant response (and any tool messages after it) from the conversation",
+        "Re-runs ag.Run(ctx, lastUserMessage) with the cleaned history",
+        "If no user message found, prints 'No previous message to retry.'",
+        "Add /retry to readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "Implemented"
+    },
+    {
+      "id": "US-010",
+      "title": "Add /tokens command for per-message token breakdown",
+      "description": "As a user, I want to see which messages are consuming the most context so I can manage my conversation size.",
+      "acceptanceCriteria": [
+        "Add /tokens command to handleCommand in cmd/root.go",
+        "Iterates through ag.Messages() and estimates tokens per message using tokens.EstimateTokens",
+        "Displays a table: index, role (colored), token count, and first 60 chars of content (truncated with ...)",
+        "At the bottom, shows total tokens and context usage percentage",
+        "Shows the top 5 largest messages highlighted in yellow if they exceed 1000 tokens",
+        "Add /tokens to readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "Implemented"
+    },
+    {
+      "id": "US-011",
+      "title": "Add /drop command to remove specific messages from context",
+      "description": "As a user, I want to selectively remove messages from the conversation to free context space.",
+      "acceptanceCriteria": [
+        "Add /drop command to handleCommand: '/drop N' removes message at index N, '/drop N-M' removes messages N through M inclusive",
+        "Does not allow dropping the system message (index 0 if it exists)",
+        "After dropping, prints 'Dropped N message(s). Context freed: ~X tokens'",
+        "If index is out of range, prints appropriate error",
+        "Add /drop to readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "Implemented"
+    },
+    {
+      "id": "US-012",
+      "title": "Add configurable timeouts via environment variables",
+      "description": "As a user, I want to customize tool timeouts without changing source code.",
+      "acceptanceCriteria": [
+        "Check for BU_BASH_TIMEOUT environment variable in execBash (default: 120 seconds)",
+        "Check for BU_HTTP_TIMEOUT environment variable in execHttpRequest (default: 30 seconds)",
+        "Check for BU_FETCH_TIMEOUT environment variable in ToolFetchLocalURL and ToolSearchWeb (default: 5 seconds)",
+        "Check for BU_TEST_TIMEOUT environment variable in execRunTests (default: 300 seconds)",
+        "Parse each as integer seconds, falling back to the existing default if not set or invalid",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "Implemented"
+    },
+    {
+      "id": "US-013",
+      "title": "Improve auto-compact notification with message preview",
+      "description": "As a user, when auto-compact removes messages, I want to know which messages were pruned so I'm not surprised by lost context.",
+      "acceptanceCriteria": [
+        "In agent.go CompactToTokens, before removing messages, collect a summary of what's being removed: the role and first 40 chars of each message being pruned",
+        "Change CompactToTokens to return both the count and a string summary of pruned messages",
+        "In the Run() loop auto-compact block, print the summary below the existing pruning notification, showing up to 5 removed messages with truncated previews",
+        "Format: '  Pruned: [user] \"Fix the login bug by...\" | [assistant] \"I'll update the auth...\" | ...'",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": "Implemented: CompactToTokens returns (int, string) with pruned message previews"
+    },
+    {
+      "id": "US-014",
+      "title": "Add /files command to show all files touched this session",
+      "description": "As a user, I want to see a summary of every file the agent has read, written, or edited in this session.",
+      "acceptanceCriteria": [
+        "Add a 'touchedFiles map[string]string' field to the Agent struct (maps file path to last action: 'read', 'write', 'edit')",
+        "In executeTool, after successful execution of read_file, write_file, edit_file, or batch_replace, record the file path(s) and action in touchedFiles",
+        "Add /files command to handleCommand that displays the touchedFiles map sorted by path, with action colored (read=gray, write=green, edit=yellow)",
+        "Add /files to readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": "Implemented: touchedFiles map on Agent, trackTouchedFile in executeTool, /files command with sorted colored output"
+    }
+  ]
+}

@@ -1,0 +1,252 @@
+{
+  "project": "G-Rump-CLI (BU-CLI)",
+  "branchName": "ralph/singularity",
+  "description": "The Singularity Update: Diff previews, YAML plugin system, multi-model routing, agent pipelines, self-healing error recovery, conversation forking, multi-perspective code review, natural language git, and live build monitoring. Features no other coding CLI has.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add diff preview engine for file changes",
+      "description": "As a user, I want to see a colored unified diff of what the agent is about to change before it gets applied, so I can review changes visually.",
+      "acceptanceCriteria": [
+        "Create internal/diff/diff.go with package diff",
+        "Implement func UnifiedDiff(oldContent, newContent, filePath string) string that produces a unified diff output with --- a/path and +++ b/path headers",
+        "Implement func ColorDiff(diffText string) string that wraps removed lines (starting with -) in red ANSI, added lines (starting with +) in green ANSI, and @@ hunk headers in cyan ANSI, using the color constants from internal/ui",
+        "Implement func FormatDiffStats(diffText string) string that returns a one-line summary like '3 additions, 2 deletions' by counting + and - lines",
+        "The diff algorithm should use a simple line-by-line comparison: split both strings by newline, find common prefix and suffix lines, and output the differing section with context (3 lines before/after)",
+        "Add unit-level verification: the function must handle empty old content (new file), empty new content (file deletion), and identical content (no diff) without panicking",
+        "Typecheck passes (go build ./...)"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Integrate diff preview into write_file and edit_file tools",
+      "description": "As a user, I want the agent to show me a diff preview before applying file changes when accept_edits mode is on.",
+      "acceptanceCriteria": [
+        "In internal/agent/agent.go executeTool function, when a.acceptEdits is true and the tool is 'write_file' or 'edit_file', compute a diff BEFORE applying the change",
+        "For write_file: read existing file content (or empty string if new file), compute diff against the new content using diff.UnifiedDiff, display with diff.ColorDiff",
+        "For edit_file: read the file, compute what the content would look like after the replacement, compute diff between original and modified using diff.UnifiedDiff, display with diff.ColorDiff",
+        "After showing the diff, print the diff stats line from diff.FormatDiffStats",
+        "The existing accept/reject prompt (readline Y/n) must appear AFTER the diff is displayed, not before",
+        "If the user rejects (n), return 'User rejected the change' as the tool result instead of applying",
+        "When accept_edits is false, skip the diff display entirely and apply changes as before (no behavior change)",
+        "Import the new diff package in agent.go",
+        "Typecheck passes (go build ./...)"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Add YAML plugin system for custom tool definitions",
+      "description": "As a user, I want to define custom tools in YAML files that the CLI loads automatically, so I can extend the tool set without recompiling.",
+      "acceptanceCriteria": [
+        "Create internal/plugins/loader.go with package plugins",
+        "Define a PluginTool struct: Name string, Description string, Parameters []PluginParam (each has Name, Type, Description, Required bool), Command string (shell command template with {{.param_name}} placeholders)",
+        "Implement func LoadPlugins(dir string) ([]PluginTool, error) that reads all *.yaml and *.yml files from the directory, parses them into PluginTool structs using gopkg.in/yaml.v3",
+        "Implement func (p PluginTool) ToToolDefinition() ollama.Tool that converts a PluginTool to an ollama.Tool definition with type 'function'",
+        "Implement func (p PluginTool) Execute(args map[string]interface{}) (string, error) that renders the Command template with the provided args using strings.ReplaceAll for each {{.param_name}} pattern, then executes it via exec.Command('bash', '-c', rendered) with a 120-second timeout",
+        "Add gopkg.in/yaml.v3 to go.mod (run go get gopkg.in/yaml.v3)",
+        "The plugin directory path is ~/.g-rump-cli/plugins/ — create it if it doesn't exist during LoadPlugins",
+        "Typecheck passes (go build ./...)"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Integrate plugin system into agent and add /plugins command",
+      "description": "As a user, I want plugins to be loaded at startup and listed with a /plugins command.",
+      "acceptanceCriteria": [
+        "In cmd/root.go runREPL, after creating the agent, call plugins.LoadPlugins(filepath.Join(configDir(), 'plugins')) and store the result",
+        "Pass loaded plugins to agent via a new agent method: SetPlugins([]plugins.PluginTool)",
+        "In agent.go, add a plugins field ([]plugins.PluginTool) to the Agent struct. In New(), also add plugin tool definitions to toolDefsRaw by appending their ToToolDefinition() results to the tools.Definitions() slice before serializing",
+        "In agent.go executeTool, before the 'unknown tool' error, check if the tool name matches any plugin name and call plugin.Execute(args) if so",
+        "Add plugin tool names to the toolSpinLabel map with label 'Running plugin...'",
+        "In cmd/root.go handleCommand, add a '/plugins' case that lists all loaded plugins: name, description, and parameter count. If no plugins loaded, print 'No plugins loaded. Add YAML files to ~/.g-rump-cli/plugins/'",
+        "Add /plugins to the readline autocompleter and /help output",
+        "Typecheck passes (go build ./...)"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Add multi-model config with fast/default/powerful tiers",
+      "description": "As a user, I want to configure different AI models for different task complexities so the CLI uses fast models for simple reads and powerful models for complex reasoning.",
+      "acceptanceCriteria": [
+        "In cmd/root.go Config struct, add a Models field: Models map[string]string `json:\"models,omitempty\"` with keys 'fast', 'default', 'powerful'",
+        "In loadConfig, if cfg.Models is nil, initialize it as an empty map",
+        "In cmd/root.go handleCommand /model case, extend the command: '/model tiers' shows current fast/default/powerful assignments, '/model fast <name>' sets the fast tier model, '/model powerful <name>' sets the powerful tier model, '/model <name>' (no tier prefix) sets the default tier as before",
+        "Add a new agent method SetModelTiers(tiers map[string]string) that stores the tier map on the Agent struct as a new field 'modelTiers map[string]string'",
+        "In cmd/root.go after creating the agent, call ag.SetModelTiers(cfg.Models) if cfg.Models is non-empty",
+        "Persist model tier changes to config via saveConfig when /model fast or /model powerful is used",
+        "Typecheck passes (go build ./...)"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Add intelligent model routing in agent loop",
+      "description": "As a user, I want the agent to automatically use the fast model for read-only tool calls and the powerful model for complex multi-tool planning, optimizing cost and speed.",
+      "acceptanceCriteria": [
+        "In agent.go, add a method routeModel(toolCalls []ollama.ToolCall, turnCount int) string that selects the appropriate model tier",
+        "Routing logic: if modelTiers is nil or empty, always return a.model (default). If the previous response had ONLY read-only tool calls (read_file, glob, grep, list_directory, project_map, fetch_webpage, search_web), use the 'fast' tier model for the next API call. If turnCount > 5 (deep multi-step reasoning), use the 'powerful' tier model. Otherwise use the 'default' tier (which falls back to a.model if not set)",
+        "In the Run() loop, before building the ChatRequest, call routeModel with the previous turn's tool calls and current turn count. Set req.Model to the returned model",
+        "Add a Debugf log line when the model switches: 'Model routed: %s (tier: %s)'",
+        "If a tier model is not configured (empty string in map), fall back to a.model",
+        "Typecheck passes (go build ./...)"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Add agent pipeline framework with YAML definitions",
+      "description": "As a user, I want to define multi-step AI agent workflows (like review or TDD) as YAML pipeline files that execute specialized agent steps in sequence.",
+      "acceptanceCriteria": [
+        "Create internal/pipeline/pipeline.go with package pipeline",
+        "Define Pipeline struct: Name string, Description string, Steps []Step. Define Step struct: Name string, Role string, Prompt string (template with {{.input}} placeholder), DependsOn string (optional, name of previous step whose output feeds in)",
+        "Implement func LoadPipeline(path string) (*Pipeline, error) that reads a YAML file into a Pipeline struct using gopkg.in/yaml.v3",
+        "Implement func LoadAllPipelines(dir string) ([]*Pipeline, error) that loads all *.yaml files from a directory",
+        "Implement func (p *Pipeline) Execute(ctx context.Context, input string, runStep func(ctx context.Context, stepName string, prompt string) (string, error)) (map[string]string, error) that executes each step in order, passing the previous step's output into the next step's {{.input}} template. The runStep callback is provided by the caller (agent) to actually run the AI. Returns a map of step_name -> output",
+        "For steps with DependsOn, inject that specific step's output as {{.input}}. For the first step (or steps without DependsOn), use the original user input",
+        "Typecheck passes (go build ./...)"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Ship built-in pipelines and /pipeline command",
+      "description": "As a user, I want to run /pipeline review to get a multi-perspective code review, /pipeline tdd to do test-driven development, and /pipeline refactor for guided refactoring.",
+      "acceptanceCriteria": [
+        "Create internal/pipeline/builtins.go that defines 3 built-in pipelines as Go string constants (YAML format) and a func BuiltinPipelines() []*Pipeline that parses and returns them",
+        "Review pipeline (3 steps): step 'analyze' (prompt: 'Analyze the following code changes for correctness issues, logic errors, and potential bugs: {{.input}}'), step 'security' (prompt: 'Review for security vulnerabilities including injection, auth issues, data exposure: {{.input}}'), step 'summary' (prompt: 'Combine these review findings into a structured report with severity ratings. Correctness findings: {{.analyze_output}}. Security findings: {{.security_output}}')",
+        "TDD pipeline (3 steps): step 'write_tests' (prompt: 'Write failing tests for: {{.input}}'), step 'implement' (prompt: 'Implement the minimum code to make these tests pass: {{.write_tests_output}}'), step 'verify' (prompt: 'Run the tests and verify they pass. If they fail, fix the implementation: {{.implement_output}}')",
+        "Refactor pipeline (2 steps): step 'analyze' (prompt: 'Analyze this code for refactoring opportunities (duplication, complexity, naming): {{.input}}'), step 'refactor' (prompt: 'Apply the suggested refactorings surgically: {{.analyze_output}}')",
+        "In cmd/root.go handleCommand, add '/pipeline' case: '/pipeline' lists available pipelines, '/pipeline <name>' runs the named pipeline by collecting the next user input as the pipeline input, then calling the pipeline Execute with a runStep that uses delegate_task (or creates a temporary agent sub-call)",
+        "Add /pipeline to readline autocompleter and /help output",
+        "Typecheck passes (go build ./...)"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Add self-healing error recovery pipeline",
+      "description": "As a user, I want the agent to automatically try to fix failed tool calls using diverse strategies before giving up, so it can recover from common errors autonomously.",
+      "acceptanceCriteria": [
+        "In internal/agent/agent.go, add a method attemptSelfHeal(ctx context.Context, toolName string, args map[string]interface{}, originalError string) (string, bool) that tries to recover from a tool failure",
+        "Healing strategies (tried in order): Strategy 1 (re-read): if the tool is edit_file and error contains 'not found in file', re-read the file and return a prompt suggesting the agent read_file first. Strategy 2 (permission fix): if error contains 'permission denied', try running 'chmod +rw' on the file path arg and retry the original tool. Strategy 3 (timeout bump): if error contains 'timed out' or 'deadline exceeded', retry the tool with double the timeout arg",
+        "In agent.go executeTool, after a tool returns an error, call attemptSelfHeal. If it returns (result, true), use that result instead of the error. If (_, false), return the original error as before",
+        "Add a healAttempts counter field on Agent (int) that tracks total healing attempts this session. Reset it in New(). Cap at 10 total healing attempts per session to prevent infinite loops",
+        "Add Debugf logging for each healing attempt: 'Self-heal attempt %d: strategy=%s tool=%s'",
+        "Typecheck passes (go build ./...)"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Add error pattern learning store",
+      "description": "As a user, I want the CLI to remember which error fixes worked so it can suggest proven solutions faster next time.",
+      "acceptanceCriteria": [
+        "Create internal/learning/patterns.go with package learning",
+        "Define ErrorPattern struct: ErrorSubstring string, ToolName string, FixDescription string, SuccessCount int, LastSeen time.Time",
+        "Implement func LoadPatterns(path string) ([]ErrorPattern, error) that reads from a JSON file (default: ~/.g-rump-cli/patterns.json)",
+        "Implement func SavePatterns(path string, patterns []ErrorPattern) error that writes the patterns as indented JSON",
+        "Implement func RecordSuccess(patterns *[]ErrorPattern, errorSubstring, toolName, fixDesc string) that adds or increments a matching pattern",
+        "Implement func FindMatch(patterns []ErrorPattern, errorMsg, toolName string) *ErrorPattern that returns the best matching pattern (highest SuccessCount) where errorMsg contains the pattern's ErrorSubstring and toolName matches",
+        "In agent.go attemptSelfHeal, before trying strategies, call learning.FindMatch. If a match is found with SuccessCount >= 2, log 'Applying learned fix: %s' and try that fix first",
+        "After a successful heal in executeTool, call learning.RecordSuccess and save patterns",
+        "Typecheck passes (go build ./...)"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Add conversation forking with /fork, /branches, and /switch",
+      "description": "As a user, I want to fork the conversation to try different approaches and switch between them, like git branches for conversations.",
+      "acceptanceCriteria": [
+        "In agent.go, add a new field 'forks map[string][]ollama.Message' initialized in New(), and 'currentFork string' (empty string = main branch)",
+        "Add Agent methods: ForkConversation(name string) error — deep-copies current messages into forks[name] and switches currentFork to name. SwitchFork(name string) error — saves current messages to forks[currentFork] (or forks['main'] if currentFork is empty), then loads forks[name] into a.messages, resets token cache. ListForks() map[string]int — returns fork names with message counts. CurrentFork() string — returns currentFork or 'main'",
+        "In cmd/root.go handleCommand, add '/fork' case: '/fork <name>' calls ag.ForkConversation(name), '/fork' with no args is same as '/branches'",
+        "Add '/branches' case that calls ag.ListForks() and prints each fork name, message count, and marks the current one with an asterisk (*)",
+        "Add '/switch <name>' case that calls ag.SwitchFork(name)",
+        "Add /fork, /branches, /switch to readline autocompleter and /help output",
+        "Typecheck passes (go build ./...)"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Add /review command for multi-perspective code review",
+      "description": "As a user, I want to run /review to get an AI-powered code review of my staged git changes from multiple perspectives (correctness, security, performance).",
+      "acceptanceCriteria": [
+        "In cmd/root.go handleCommand, add a '/review' case",
+        "When /review is invoked, run 'git diff --cached' via exec.Command. If no staged changes, try 'git diff' for unstaged changes. If still empty, print 'No changes to review.' and return",
+        "Construct 3 review prompts from the diff: prompt1 = 'Review this code diff for CORRECTNESS. Look for logic errors, off-by-one errors, nil pointer dereferences, missing error handling, and incorrect assumptions. Be specific about line numbers. Diff:\\n' + diff, prompt2 = 'Review this code diff for SECURITY vulnerabilities. Check for injection attacks, hardcoded secrets, insecure defaults, missing auth checks, and data exposure. Diff:\\n' + diff, prompt3 = 'Review this code diff for PERFORMANCE. Look for N+1 queries, unnecessary allocations, blocking operations, missing indexes, and inefficient algorithms. Diff:\\n' + diff",
+        "Send each prompt sequentially to the agent via ag.Run(ctx, prompt) — prefix each with a section header printed to stdout: '=== CORRECTNESS REVIEW ===' in cyan, '=== SECURITY REVIEW ===' in red, '=== PERFORMANCE REVIEW ===' in yellow",
+        "After all 3 reviews complete, print a '=== REVIEW COMPLETE ===' footer in green",
+        "Add /review to the readline autocompleter and /help output",
+        "Typecheck passes (go build ./...)"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Add /git natural language git command",
+      "description": "As a user, I want to type '/git commit the auth changes with a good message' or '/git what changed today' and have the AI interpret my intent and execute the right git commands.",
+      "acceptanceCriteria": [
+        "In cmd/root.go handleCommand, add a '/git' case that takes the rest of the input after '/git ' as a natural language instruction",
+        "Construct a specialized prompt: 'You are a git expert. The user wants to perform a git operation described in natural language. Interpret their intent and execute the appropriate git commands using the bash tool. IMPORTANT: Before any destructive operation (reset, force push, rebase), explain what you are about to do and ask for confirmation. User request: ' + the natural language input",
+        "Add additional context to the prompt: run 'git status --porcelain' and 'git log --oneline -5' via exec.Command and append the output as 'Current git status:\\n' + status + '\\nRecent commits:\\n' + log",
+        "Send this prompt to the agent via ag.Run(ctx, fullPrompt)",
+        "If no text follows '/git', print usage: 'Usage: /git <natural language command>\\nExamples:\\n  /git commit the auth changes\\n  /git what changed since yesterday\\n  /git create a branch for the new feature\\n  /git undo the last commit'",
+        "Add /git to the readline autocompleter and /help output",
+        "Typecheck passes (go build ./...)"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Add /monitor for live build and test watching",
+      "description": "As a user, I want to start a background file watcher that automatically runs builds/tests when files change and shows pass/fail status in my prompt.",
+      "acceptanceCriteria": [
+        "Create internal/monitor/monitor.go with package monitor",
+        "Define Monitor struct with fields: running bool, mu sync.Mutex, stopCh chan struct{}, status string (one of 'idle', 'pass', 'fail', 'building'), lastError string, onChange func(status string)",
+        "Implement func New(onChange func(string)) *Monitor",
+        "Implement func (m *Monitor) Start(dir string, projectType string) error that launches a goroutine polling file mtimes every 2 seconds (using filepath.WalkDir, tracking a map[string]time.Time of file modtimes, skipping hidden dirs and node_modules). When any tracked file changes, set status to 'building', run the project's build/test command (Go: 'go build ./...', Node: 'npm test', Rust: 'cargo check', Python: 'python -m pytest --co -q'), set status to 'pass' or 'fail' based on exit code, call onChange with the new status",
+        "Implement func (m *Monitor) Stop()",
+        "Implement func (m *Monitor) Status() string that returns the current status string",
+        "In cmd/root.go, add a '/monitor' case: '/monitor' or '/monitor start' creates and starts a monitor, storing it as a variable in the REPL scope. '/monitor stop' stops it. '/monitor status' shows current status",
+        "When the monitor is running, modify the getPrompt() function to prepend a colored status indicator: green dot for pass, red dot for fail, yellow dot for building, gray dot for idle — using ANSI: e.g., green='\\033[32m*\\033[0m '",
+        "Add /monitor to readline autocompleter and /help output",
+        "Typecheck passes (go build ./...)"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

@@ -1,0 +1,268 @@
+{
+  "project": "G-Rump-CLI (BU-CLI)",
+  "branchName": "ralph/ultimate-upgrade",
+  "description": "Transform BU-CLI into an insane-tier AI coding assistant with rich terminal output, intelligent context management, git superpowers, and elite developer tools",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add glamour dependency for rich markdown rendering",
+      "description": "As a developer, I need the charmbracelet/glamour library added so we can render beautiful markdown in the terminal.",
+      "acceptanceCriteria": [
+        "Run 'go get github.com/charmbracelet/glamour' from the project root",
+        "go.mod includes github.com/charmbracelet/glamour as a dependency",
+        "Run 'go mod tidy' to clean up transitive deps",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Added glamour v0.10.0 with chroma, lipgloss, termenv, goldmark transitive deps. go mod tidy clean. Build passes."
+    },
+    {
+      "id": "US-002",
+      "title": "Create markdown rendering module in ui package",
+      "description": "As a developer, I need a RenderMarkdown function that takes raw markdown text and returns ANSI-formatted terminal output using glamour.",
+      "acceptanceCriteria": [
+        "Create internal/ui/markdown.go with a RenderMarkdown(content string) string function",
+        "Uses glamour with DarkStyle by default and auto-detects terminal width",
+        "Falls back to returning raw content if glamour rendering fails",
+        "Adds a RenderMarkdownWithTheme(content string, dark bool) string variant that respects the current ui theme (dark vs light)",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Created internal/ui/markdown.go with RenderMarkdown and RenderMarkdownWithTheme. Uses glamour.WithStandardStyle (dark/light) and auto-detects terminal width. Falls back to raw content on error."
+    },
+    {
+      "id": "US-003",
+      "title": "Add /render command to toggle rich markdown output mode",
+      "description": "As a user, I want to toggle between raw streaming output and buffered rich-rendered markdown output so I can choose the experience I prefer.",
+      "acceptanceCriteria": [
+        "Add a 'RenderMode bool' field to the Config struct in cmd/root.go",
+        "Add a /render command that toggles cfg.RenderMode and prints confirmation",
+        "When RenderMode is true: in agent.go Run(), buffer all streamed tokens into a strings.Builder instead of printing them raw, show a spinner during generation, then after streaming completes call ui.RenderMarkdown on the buffered content and print the result",
+        "When RenderMode is false: keep current behavior (raw token streaming)",
+        "Add /render to the readline autocompleter and /help output",
+        "Persist RenderMode in config.json via the 'render_mode' JSON field",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Added RenderMode to Config, /render toggle command, buffered markdown rendering in agent Run() using ui.RenderMarkdown. Autocompleter and help updated."
+    },
+    {
+      "id": "US-004",
+      "title": "Add token estimation module",
+      "description": "As a developer, I need a utility to estimate token counts for messages so we can manage context windows intelligently instead of counting messages.",
+      "acceptanceCriteria": [
+        "Create internal/tokens/counter.go in a new 'tokens' package",
+        "Function EstimateTokens(text string) int — estimates tokens using the heuristic: split on whitespace and punctuation, count ~1 token per 4 characters for English text (len(text)/4 as a floor approximation)",
+        "Function EstimateMessages(msgs []ollama.Message) int — sums token estimates across all messages (role name + content + tool call arguments if present)",
+        "Function FormatTokenCount(n int) string — returns human-readable format like '12.5K' or '1.2M'",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Created internal/tokens/counter.go with EstimateTokens (len/4 heuristic), EstimateMessages (sums all message content + tool call args), FormatTokenCount (human-readable K/M formatting)."
+    },
+    {
+      "id": "US-005",
+      "title": "Replace message-count compaction with token-aware compaction",
+      "description": "As a user, I need the auto-compaction to be based on actual estimated token usage rather than a crude 100-message limit, so context is managed intelligently across different model context windows.",
+      "acceptanceCriteria": [
+        "In agent.go, add a 'contextLimit int' field to Agent (default 128000 tokens)",
+        "Replace the 'if len(a.messages) > 100' check in Run() with: estimate total tokens using tokens.EstimateMessages, compact when exceeding 80% of contextLimit",
+        "When compacting, remove oldest non-system messages until under 60% of contextLimit, preserving the system prompt and last 10 messages minimum",
+        "The auto-compact message now shows estimated token count: '[!] Auto-pruned to ~X tokens (limit: Y)'",
+        "Add /context-limit command to set contextLimit (e.g., '/context-limit 32000' for smaller models) and add it to the readline autocompleter",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Added contextLimit field (default 128K), CompactToTokens method, token-aware auto-compaction at 80% threshold compacting to 60%. Added /context-limit command. Human-readable token counts in compact message."
+    },
+    {
+      "id": "US-006",
+      "title": "Add session metrics tracking to Agent struct",
+      "description": "As a developer, I need the Agent to track token usage and API call metrics throughout the session for display and analysis.",
+      "acceptanceCriteria": [
+        "Add fields to Agent struct: InputTokens int, OutputTokens int, APICallCount int, ToolCallCount int, SessionStart time.Time",
+        "Set SessionStart in the New() constructor",
+        "After each ChatStream call in Run(), increment APICallCount by 1, estimate and add input tokens (from the messages sent) to InputTokens, estimate and add output tokens (from result.Content + tool call args) to OutputTokens",
+        "After each tool execution, increment ToolCallCount by 1",
+        "Add getter methods: Stats() returning a struct with all metrics plus computed fields (total tokens, session duration, average tok/s)",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Added sessionStart, inputTokens, outputTokens, apiCallCount, toolCallCount fields. Metrics updated after each ChatStream and executeTool call. SessionStats struct and Stats() getter method added."
+    },
+    {
+      "id": "US-007",
+      "title": "Add /stats command showing session metrics dashboard",
+      "description": "As a user, I want to see a rich dashboard of my session metrics including token usage, API calls, duration, and context window usage.",
+      "acceptanceCriteria": [
+        "Add /stats command to handleCommand in root.go",
+        "Display formatted output showing: Model name, Session duration, API calls count, Tool calls count, Input tokens (estimated), Output tokens (estimated), Total tokens, Current context window usage (tokens used / limit), a visual progress bar for context usage using block characters",
+        "Use colored output: Green for low usage (<50%), Yellow for medium (50-80%), Red for high (>80%) context usage",
+        "Add /stats to the readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Added /stats command with full metrics dashboard: model, duration, API/tool call counts, token usage breakdown, context usage with colored progress bar (green/yellow/red)."
+    },
+    {
+      "id": "US-008",
+      "title": "Add /diff command to inject git changes into context",
+      "description": "As a user, I want to quickly inject my current git diff into the conversation so the agent can analyze my uncommitted changes.",
+      "acceptanceCriteria": [
+        "Add /diff command to handleCommand in root.go",
+        "Runs 'git diff' and 'git diff --cached' via exec.Command, combines output",
+        "If no changes found, prints 'No uncommitted changes detected.'",
+        "If changes found, sends the diff as a user message through ag.Run() with the prompt: 'Here are my current uncommitted git changes. Please analyze them:\\n```diff\\n{diff_output}\\n```'",
+        "Add /diff to the readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Added /diff command. Runs git diff + git diff --cached, combines output, injects into conversation via ag.Run() with diff prompt. Autocompleter and help updated."
+    },
+    {
+      "id": "US-009",
+      "title": "Add /export command for conversation export to markdown",
+      "description": "As a user, I want to export my current conversation as a readable markdown file for documentation or sharing.",
+      "acceptanceCriteria": [
+        "Add /export command to handleCommand in root.go, accepts optional filename argument",
+        "Creates ~/.bu-cli/exports/ directory if it does not exist",
+        "Default filename: 'conversation-{timestamp}.md'",
+        "Markdown format: '# BU-CLI Conversation\\n\\n**Model:** {model}\\n**Date:** {date}\\n\\n---\\n\\n' followed by each message as '## User\\n{content}\\n\\n' or '## Assistant\\n{content}\\n\\n' (skip system messages, format tool messages as '### Tool: {name}\\n```\\n{result}\\n```')",
+        "Prints confirmation with file path on success",
+        "Add /export to the readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "Added /export command. Writes conversation as markdown to ~/.bu-cli/exports/ with model, date, and all user/assistant/tool messages formatted. Supports custom filename argument."
+    },
+    {
+      "id": "US-010",
+      "title": "Add /paste command for clipboard integration",
+      "description": "As a user, I want to paste clipboard contents directly into the conversation without manually copying text into the terminal.",
+      "acceptanceCriteria": [
+        "Add /paste command to handleCommand in root.go",
+        "On macOS (runtime.GOOS == 'darwin'): run 'pbpaste' to get clipboard contents",
+        "On Linux: try 'xclip -selection clipboard -o', fall back to 'xsel --clipboard --output'",
+        "If clipboard is empty, print 'Clipboard is empty.'",
+        "If content found, print a preview (first 3 lines + '... ({N} total lines)'), then pass the full content as user input through ag.Run()",
+        "Add /paste to the readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "Added /paste command. Uses pbpaste on macOS, xclip/xsel on Linux. Shows 3-line preview then runs content through agent. Autocompleter and help updated."
+    },
+    {
+      "id": "US-011",
+      "title": "Add run_tests tool for automatic test execution",
+      "description": "As a user, I want the agent to have a dedicated tool for running project tests that auto-detects the test framework, so it can verify changes without needing to know the exact command.",
+      "acceptanceCriteria": [
+        "Add 'run_tests' tool definition to tools.Definitions() in tools.go with parameters: 'path' (optional directory), 'filter' (optional test name filter)",
+        "Add run_tests to the Execute switch in tools.go, calling a new execRunTests function",
+        "execRunTests auto-detects the test command by checking for: go.mod -> 'go test ./...', package.json -> 'npm test', Cargo.toml -> 'cargo test', pyproject.toml/requirements.txt -> 'pytest', Gemfile -> 'bundle exec rspec'",
+        "If filter is provided, append it to the command (e.g., 'go test ./... -run {filter}')",
+        "Run the command with a 5 minute timeout, return stdout+stderr",
+        "Add run_tests to the toolSpinLabel map in agent.go with label 'Running tests...'",
+        "Add run_tests to AutoAllowed as false (requires permission)",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "Added run_tests tool with auto-detection for Go, Rust, Node, Python, Ruby. Supports filter param. 5-min timeout. Added to definitions, Execute switch, AutoAllowed (false), and toolSpinLabel."
+    },
+    {
+      "id": "US-012",
+      "title": "Persist tool permission preferences in config",
+      "description": "As a user, I want my 'Always allow' tool permission choices to persist across sessions so I don't have to re-approve the same tools every time.",
+      "acceptanceCriteria": [
+        "Add 'AutoAllow []string' field to Config struct in root.go with json tag 'auto_allow,omitempty'",
+        "On startup in runREPL(), after creating the agent, merge cfg.AutoAllow into the agent's autoAllow map",
+        "Add a new method Agent.AutoAllowedTools() []string that returns the names of all currently auto-allowed non-default tools",
+        "When a user selects 'Always allow' for a tool, also update the Config and auto-save to disk (call saveConfig)",
+        "Pass a callback or reference to the Agent so it can trigger config saves — add an Agent.SetOnAutoAllow(fn func(toolName string)) callback",
+        "Add /permissions command that lists all tools and whether they are auto-allowed, with the ability to toggle them",
+        "Add /permissions to the readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "Added AutoAllow []string to Config. Persisted on 'Always allow' selection via onAutoAllow callback. Added /permissions command showing auto/always/ask status for all tools. Restored on startup."
+    },
+    {
+      "id": "US-013",
+      "title": "Improve connection error handling with friendly messages",
+      "description": "As a user, I need clear, actionable error messages when things go wrong with the AI backend connection instead of raw Go error strings.",
+      "acceptanceCriteria": [
+        "In internal/ollama/client.go, wrap connection errors in ChatStream with user-friendly messages: if 'connection refused' -> 'Cannot connect to Ollama at {host}. Is Ollama running? Start it with: ollama serve'",
+        "If HTTP 404 -> 'Model {model} not found. Run: ollama pull {model}'",
+        "If HTTP 401/403 -> 'Authentication failed. Check your API key with /key'",
+        "If timeout -> 'Request timed out. The model may be loading. Try again in a moment.'",
+        "Add a new exported function ClassifyError(err error, host string, model string) string that returns a friendly error string",
+        "In agent.go Run(), use ClassifyError when ChatStream returns an error, before returning it to the REPL",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": "Added ClassifyError function in ollama/client.go covering connection refused, 404, 401/403, timeout, rate limit, 5xx. Added Host() getter. Agent.Run() now uses ClassifyError for user-friendly error display."
+    },
+    {
+      "id": "US-014",
+      "title": "Add interactive model selector to /model command",
+      "description": "As a user, I want /model with no arguments to show an interactive selector of available models instead of just printing the current model name.",
+      "acceptanceCriteria": [
+        "When /model is called with no arguments, attempt to fetch local models from Ollama using client.ListModels()",
+        "Combine local models with the KnownCloudModels list, deduplicating by name",
+        "Display using ui.SelectOption with each model as an option (show model name and size for local models, 'cloud' tag for cloud models)",
+        "Limit to max 15 options to avoid screen overflow",
+        "If the user selects a model, update cfg.Model and ag.SetModel()",
+        "If ListModels() fails (Ollama not running), fall back to showing KnownCloudModels only with a warning",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": "Upgraded /model to show interactive SelectOption list when called with no args. Fetches local models from Ollama, merges with KnownCloudModels, shows size. Falls back to cloud-only on connection failure. Capped at 15 options."
+    },
+    {
+      "id": "US-015",
+      "title": "Add /log command to inject recent git history into context",
+      "description": "As a user, I want to quickly inject recent git commit history into the conversation so the agent understands what has changed recently.",
+      "acceptanceCriteria": [
+        "Add /log command to handleCommand in root.go, accepts optional count argument (default: 20)",
+        "Runs 'git log --oneline --no-decorate -N' where N is the count",
+        "If not in a git repo, prints 'Not in a git repository.'",
+        "If log output found, sends it as user message through ag.Run() with prompt: 'Here is the recent git history for this project:\\n```\\n{log_output}\\n```\\nPlease review and let me know if you have any observations.'",
+        "Add /log to the readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": "Added /log command. Runs git log --oneline -N, injects into conversation. Supports custom count arg. Autocompleter and help updated."
+    },
+    {
+      "id": "US-016",
+      "title": "Add /context command showing context window usage breakdown",
+      "description": "As a user, I want to see exactly how my context window is being used, broken down by message type, so I can manage long conversations effectively.",
+      "acceptanceCriteria": [
+        "Add /context command to handleCommand in root.go",
+        "Calculate token estimates for each message category: system prompt, user messages, assistant messages, tool results",
+        "Display a formatted breakdown table showing: category name, message count, estimated tokens, percentage of total",
+        "Show a visual bar chart using block characters for each category with the ui theme colors (Purple for system, Cyan for user, Green for assistant, Yellow for tools)",
+        "Show total context usage vs the configured context limit with a progress bar",
+        "Add /context to the readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": "Added /context command. Shows breakdown by system/user/assistant/tool with message counts and token estimates. Colored progress bar for context usage. Autocompleter updated."
+    }
+  ]
+}

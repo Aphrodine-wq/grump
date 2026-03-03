@@ -1,0 +1,19 @@
+# Build artifacts
+dist/
+bu-cli
+
+# Dependencies
+node_modules/
+*.tgz
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+.claude/

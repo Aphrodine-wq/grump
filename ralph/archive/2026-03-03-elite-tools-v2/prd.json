@@ -1,0 +1,238 @@
+{
+  "project": "G-Rump-CLI (BU-CLI)",
+  "branchName": "ralph/elite-tools-v2",
+  "description": "Second wave of elite upgrades: smarter edit_file, HTTP tool, git commit automation, live streaming metrics, cost tracking, conversation search, file watcher, and auto-retry for failed tools",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add fuzzy whitespace-normalized fallback to edit_file tool",
+      "description": "As a user, I need edit_file to be smarter when exact string matching fails, so the agent stops failing on whitespace mismatches.",
+      "acceptanceCriteria": [
+        "In execEditFile in internal/tools/tools.go, when strings.Count returns 0 (no exact match), try a whitespace-normalized comparison: collapse all runs of whitespace to single spaces in both the file content and old_string, then search again",
+        "If the normalized search finds exactly 1 match, perform the replacement on the original content by locating the corresponding region and replacing it",
+        "If normalized search also fails or finds multiple matches, return the original error message",
+        "Add a note in the tool result when fuzzy matching was used: 'File edited (fuzzy whitespace match): {path}'",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Implemented fuzzy whitespace-normalized fallback in execEditFile. When exact match fails, collapses all whitespace runs to single spaces and retries. Maps normalized index back to original content for replacement. Returns '(fuzzy whitespace match)' note when used."
+    },
+    {
+      "id": "US-002",
+      "title": "Add http_request tool for API testing",
+      "description": "As a user, I need the agent to make arbitrary HTTP requests (GET/POST/PUT/DELETE) with custom headers and body for testing APIs during development.",
+      "acceptanceCriteria": [
+        "Add 'http_request' tool definition to tools.Definitions() with parameters: method (string, required), url (string, required), headers (string, optional JSON object), body (string, optional)",
+        "Add execHttpRequest function in a new file internal/tools/http.go",
+        "Supports methods: GET, POST, PUT, PATCH, DELETE, HEAD",
+        "Parses headers from JSON string (e.g., '{\"Authorization\": \"Bearer xxx\"}') and sets them on the request",
+        "Returns: status code, response headers (Content-Type, Content-Length), and response body (truncated at 20000 chars)",
+        "Timeout of 30 seconds",
+        "Add to Execute switch, AutoAllowed (true - read-only), and toolSpinLabel ('Requesting...')",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Created internal/tools/http.go with execHttpRequest. Supports GET/POST/PUT/PATCH/DELETE/HEAD, JSON headers parsing, 30s timeout, body truncation at 20000 chars. Added to Definitions, Execute switch, AutoAllowed(true), toolSpinLabel."
+    },
+    {
+      "id": "US-003",
+      "title": "Add /commit command for auto-generated git commits",
+      "description": "As a user, I want to quickly commit my changes with an AI-generated commit message based on the current diff.",
+      "acceptanceCriteria": [
+        "Add /commit command to handleCommand in cmd/root.go",
+        "Runs 'git diff --cached' first; if empty, runs 'git add -A' then 'git diff --cached' to stage all changes",
+        "If still no diff, prints 'No changes to commit.'",
+        "Sends the diff to the agent with prompt: 'Generate a concise, conventional commit message (type: subject format) for these changes. Output ONLY the commit message, nothing else:\\n```diff\\n{diff}\\n```'",
+        "After agent responds, extract the commit message from the response, run 'git commit -m {message}'",
+        "Print the git commit output",
+        "Add /commit to readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Added /commit command to handleCommand. Checks staged diff, auto-stages with git add -A if empty, sends diff to agent for commit message generation, extracts last assistant message, runs git commit. Added to autocompleter and /help."
+    },
+    {
+      "id": "US-004",
+      "title": "Add live streaming token counter to spinner",
+      "description": "As a user, I want to see real-time token generation speed during AI streaming, not just after completion.",
+      "acceptanceCriteria": [
+        "In agent.go Run(), track token count and start time during streaming via the onToken callback",
+        "Every 500ms (or every 20 tokens), update the spinner label to show live stats: 'Generating... {N} tokens ({X.1f} tok/s)'",
+        "Use a goroutine with a ticker that reads from shared atomic counters to update the spinner without blocking the stream",
+        "When renderMode is true, show the spinner with live token count instead of raw streaming",
+        "When renderMode is false, show the live tok/s in the spinner until first token arrives (existing behavior), then stop spinner and stream tokens normally",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Added live streaming token counter using sync/atomic. A goroutine with 500ms ticker reads atomic counter and updates spinner label with 'Generating... N tokens (X.1f tok/s)'. Added UpdateLabel/getLabel with mutex to Spinner struct for thread safety. Ticker goroutine safely closed on first text token or stream end."
+    },
+    {
+      "id": "US-005",
+      "title": "Add /search command to search conversation history",
+      "description": "As a user, I want to search through my current conversation to find something the agent said or I asked earlier.",
+      "acceptanceCriteria": [
+        "Add /search command to handleCommand in cmd/root.go, requires a search query argument",
+        "Searches through all messages (user, assistant, tool) for case-insensitive substring matches",
+        "Displays results as: message index, role (colored), and a snippet showing the match with 50 chars of context on each side",
+        "Limits display to 10 most recent matches",
+        "If no matches found, prints 'No matches found in conversation.'",
+        "Add /search to readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Added /search command to handleCommand. Case-insensitive substring search across all non-system messages. Shows message index, colored role, and 50-char context snippet. Limits to 10 most recent matches. Added to autocompleter and /help."
+    },
+    {
+      "id": "US-006",
+      "title": "Add watch_files tool for file change monitoring",
+      "description": "As a developer, I need the agent to watch files for changes and report what changed, useful for monitoring build output or live-reloading scenarios.",
+      "acceptanceCriteria": [
+        "Add 'watch_files' tool definition to tools.Definitions() with parameters: paths (string, required - comma-separated file paths or glob patterns), duration (string, optional - how long to watch in seconds, default 10)",
+        "Create execWatchFiles in internal/tools/tools.go that polls the specified files every 500ms for modification time changes",
+        "Returns a summary of which files changed during the watch period with their old and new modification times",
+        "Maximum watch duration is 60 seconds to prevent blocking",
+        "Add to Execute switch, AutoAllowed (true), and toolSpinLabel ('Watching files...')",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Added watch_files tool. Accepts comma-separated paths/globs, polls every 500ms for mod time changes. Max 60s watch duration, default 10s. Returns summary of changed files with old/new timestamps. Added to Definitions, Execute switch, AutoAllowed(true), toolSpinLabel."
+    },
+    {
+      "id": "US-007",
+      "title": "Add auto-retry with backoff for failed tool executions",
+      "description": "As a user, I want the agent to automatically retry a failed tool call once before giving up, to handle transient failures gracefully.",
+      "acceptanceCriteria": [
+        "In executeTool in agent.go, after tools.Execute returns an error, check if the tool is retryable (all tools except write_file, edit_file, bash, delegate_task)",
+        "For retryable tools, wait 1 second then retry once",
+        "If retry succeeds, return the successful result with a note prepended: '[Succeeded on retry] '",
+        "If retry also fails, return the original error",
+        "Add a retryable map similar to autoAllow that lists which tools support auto-retry",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Added auto-retry with 1s backoff in executeTool. Retryable map excludes write_file, edit_file, bash, delegate_task. On retry success, prepends '[Succeeded on retry] ' to result. On retry failure, returns original error."
+    },
+    {
+      "id": "US-008",
+      "title": "Add /blame command to inject git blame for a file",
+      "description": "As a user, I want to quickly see who changed what in a file and inject that context into the conversation.",
+      "acceptanceCriteria": [
+        "Add /blame command to handleCommand in cmd/root.go, requires a file path argument",
+        "Runs 'git blame --line-porcelain {path}' and parses the output into a readable summary: line ranges, author, date, commit message",
+        "If the output is too long (>100 lines of blame), summarize by showing unique authors and their line count contributions",
+        "Injects the blame summary into the conversation via ag.Run() with prompt: 'Here is the git blame for {path}:\\n```\\n{blame}\\n```'",
+        "If not in a git repo or file not found, prints appropriate error",
+        "Add /blame to readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Added /blame command to handleCommand. Parses git blame --line-porcelain output, shows author line counts with percentages. Summarizes by author for files >100 lines. Injects into conversation via ag.Run(). Added to autocompleter and /help."
+    },
+    {
+      "id": "US-009",
+      "title": "Add /env command to show environment info",
+      "description": "As a user, I want to quickly see my development environment details so the agent has context about available tools and versions.",
+      "acceptanceCriteria": [
+        "Add /env command to handleCommand in cmd/root.go",
+        "Detects and displays: OS, shell, Go version (go version), Node version (node -v), Python version (python3 --version), Rust version (rustc --version), Docker availability (docker --version)",
+        "For each tool, run the version command with a 2-second timeout; if it fails, show 'not installed'",
+        "Also shows: current working directory, .env file presence, Dockerfile presence, docker-compose.yml presence",
+        "Optionally inject into conversation via ag.Run() if called with '--inject' flag (e.g., /env --inject)",
+        "Add /env to readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "Added /env command showing OS/arch, shell, Go/Node/Python/Rust/Docker versions with 2s timeout. Shows cwd, .env/Dockerfile/docker-compose.yml presence. Supports --inject flag to inject into conversation. Added to autocompleter and /help."
+    },
+    {
+      "id": "US-010",
+      "title": "Add cost estimation for cloud model usage",
+      "description": "As a user, I want to see estimated cost when using cloud models via OpenRouter so I can track spending.",
+      "acceptanceCriteria": [
+        "Add a cost estimation map in internal/tokens/counter.go mapping known cloud model prefixes to approximate cost per 1M tokens (input/output): e.g., 'deepseek' -> $0.14/$2.19, 'qwen' -> $0.30/$1.20, 'llama' -> $0.05/$0.10, 'glm' -> $0.10/$0.10 as rough defaults",
+        "Add function EstimateCost(model string, inputTokens int, outputTokens int) (float64, bool) that returns estimated cost in USD and whether the model was found in the cost map",
+        "In the /stats command in cmd/root.go, if EstimateCost returns a known model, display an additional line: 'Est. Cost:    ~$X.XXXX'",
+        "Format cost with 4 decimal places for precision",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "Added modelCosts map in tokens/counter.go with pricing for deepseek, qwen, llama, glm, mistral, gemma, phi, command-r, claude, gpt-4, gpt-3.5. EstimateCost matches model name prefix and calculates USD cost. /stats displays 'Est. Cost: ~$X.XXXX' when model is recognized."
+    },
+    {
+      "id": "US-011",
+      "title": "Add /alias command for user-defined command shortcuts",
+      "description": "As a user, I want to define custom command aliases so I can create shortcuts for frequent operations.",
+      "acceptanceCriteria": [
+        "Add 'Aliases map[string]string' field to Config struct in cmd/root.go with json tag 'aliases,omitempty'",
+        "Add /alias command: '/alias name=expansion' to create, '/alias' to list all, '/alias name=' to delete",
+        "In the handleCommand function, before the switch statement, check if the command matches an alias key and expand it (replace the command with the alias expansion)",
+        "Aliases are saved to config.json on creation/deletion via saveConfig",
+        "Aliases can reference other commands (e.g., '/alias dc=/diff' maps /dc to /diff)",
+        "Add /alias to readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "Added Aliases map[string]string to Config. /alias command supports create (name=expansion), list (no args), and delete (name=). Alias expansion happens before switch statement in handleCommand. Saved to config.json. Added to autocompleter and /help."
+    },
+    {
+      "id": "US-012",
+      "title": "Add batch_replace tool for multi-file find and replace",
+      "description": "As a developer, I need a tool to rename variables, functions, or strings across multiple files at once.",
+      "acceptanceCriteria": [
+        "Add 'batch_replace' tool definition to tools.Definitions() with parameters: old_string (required), new_string (required), include (optional glob filter like '*.go'), path (optional base directory, default '.')",
+        "Create execBatchReplace in internal/tools/tools.go",
+        "Walks the directory tree (respecting the same skip rules as glob: .git, node_modules, vendor, etc.), reads each matching file, replaces all occurrences of old_string with new_string",
+        "Records each changed file in the tracker for undo support",
+        "Returns a summary: 'Replaced N occurrences across M files: file1.go (3), file2.go (1), ...'",
+        "If no replacements found, returns 'No occurrences of old_string found.'",
+        "Add to Execute switch, AutoAllowed (false - requires permission), and toolSpinLabel ('Replacing...')",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "Added batch_replace tool with old_string, new_string, include (glob filter), path params. Walks directory tree skipping .git/node_modules/vendor/etc, replaces all occurrences, records changes in tracker for undo. Returns summary with file-level counts. AutoAllowed(false), toolSpinLabel('Replacing...')."
+    },
+    {
+      "id": "US-013",
+      "title": "Add /stash command for git stash with agent awareness",
+      "description": "As a user, I want to quickly stash and pop changes with the agent understanding what was stashed.",
+      "acceptanceCriteria": [
+        "Add /stash command to handleCommand: '/stash' to stash, '/stash pop' to pop, '/stash list' to list",
+        "For '/stash': runs 'git stash push -m \"BU-CLI stash\"', prints confirmation with number of files stashed",
+        "For '/stash pop': runs 'git stash pop', prints confirmation",
+        "For '/stash list': runs 'git stash list', displays formatted output",
+        "All variants print appropriate error messages on failure (not in git repo, nothing to stash, etc.)",
+        "Add /stash to readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": "Added /stash command with push (default), pop, and list subcommands. Push uses 'BU-CLI stash' message. Error handling for not-a-git-repo, nothing-to-stash. Added to autocompleter and /help."
+    },
+    {
+      "id": "US-014",
+      "title": "Add enhanced banner with project health and tips",
+      "description": "As a user, I want the startup banner to show useful project context: last session info, git status summary, and a random tip.",
+      "acceptanceCriteria": [
+        "In ui.PrintBanner, add an optional 'extras' string parameter that is printed below the existing banner",
+        "In cmd/root.go runREPL(), after project detection, build an extras string containing: git status summary (N modified, N untracked files via 'git status --porcelain'), last session name and time if any sessions exist, and a random tip from a hardcoded list of 8-10 tips (e.g., 'Tip: Use /render for rich markdown output', 'Tip: Use /diff to analyze uncommitted changes')",
+        "Display extras in dim gray below the banner",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": "Modified PrintBanner to accept variadic extras string. In runREPL, builds extras with git status summary (modified/untracked counts), last session name/time, and random tip from 10 tips. Displayed in dim gray below banner."
+    }
+  ]
+}

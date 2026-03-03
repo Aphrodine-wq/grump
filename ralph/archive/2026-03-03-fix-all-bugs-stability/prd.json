@@ -1,0 +1,74 @@
+{
+  "project": "G-Rump-CLI (BU-CLI)",
+  "branchName": "ralph/fix-all-bugs-stability",
+  "description": "Fix all bugs, race conditions, and stability issues to make BU-CLI work 100% correctly",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Fix zombie processes and status detection in process manager",
+      "description": "As a developer, I need background server processes to be reaped properly so they don't become zombies and status checks work correctly.",
+      "acceptanceCriteria": [
+        "Add a goroutine that calls cmd.Wait() after Start() to reap finished processes",
+        "ProcessState is correctly populated so status checks return 'Exited' when process dies",
+        "Crash detection in ToolStartServer works (checks if process exited within 1 second)",
+        "Replace bytes.Buffer with a thread-safe synchronized buffer to fix data race on stdout/stderr",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Added safeBuf type with mutex-protected Write/String. Added goroutine calling Wait() to reap processes. Added StopAll() for graceful shutdown. Status checks now use proc.isExited() instead of checking ProcessState directly."
+    },
+    {
+      "id": "US-002",
+      "title": "Fix double-close panic race condition in project git detection",
+      "description": "As a developer, I need fillGit() to be safe to call from multiple goroutines without panicking on double-close of the gitDone channel.",
+      "acceptanceCriteria": [
+        "Use sync.Once to guard the close(c.gitDone) call so it can never double-close",
+        "fillGit() remains safe to call concurrently from Detect() and FillGitInfo()",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Replaced manual mutex + select pattern with sync.Once. Channel close is now guaranteed to happen exactly once regardless of concurrent calls."
+    },
+    {
+      "id": "US-003",
+      "title": "Serialize concurrent tool permission prompts",
+      "description": "As a user, I need permission prompts to appear one at a time so they don't interleave and corrupt the terminal when multiple tools run concurrently.",
+      "acceptanceCriteria": [
+        "Permission checks are serialized with a mutex so only one prompt appears at a time",
+        "Non-permission-requiring tools still execute concurrently for speed",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Added permMu sync.Mutex to Agent struct. Permission prompts now lock the mutex before showing UI and unlock after user responds."
+    },
+    {
+      "id": "US-004",
+      "title": "Fix duplicate localSet variable in models command",
+      "description": "As a developer, I need the models command to not create a redundant localSet map that is populated but never read.",
+      "acceptanceCriteria": [
+        "Remove the first localSet declaration inside the else block",
+        "Keep only one localSet used for both display and dedup",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Moved localSet declaration before the if/else block so it's populated during local model display and reused for cloud model dedup."
+    },
+    {
+      "id": "US-005",
+      "title": "Fix history file naming and add graceful cleanup",
+      "description": "As a user, I need the readline history file to have a proper name and for the CLI to clean up background processes on exit.",
+      "acceptanceCriteria": [
+        "History file renamed from 'history.tmp' to 'history'",
+        "Background server processes are killed on REPL exit via cleanup in the exit path",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Renamed history file. Added tools.StopAll() call before exit to kill any remaining background server processes."
+    }
+  ]
+}

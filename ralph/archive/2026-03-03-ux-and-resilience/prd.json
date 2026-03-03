@@ -1,0 +1,187 @@
+{
+  "project": "G-Rump-CLI (BU-CLI)",
+  "branchName": "ralph/ux-and-resilience",
+  "description": "User-facing error quality, configurable limits, session hygiene, smart compaction, and debug observability",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add user-friendly error wrapping for tool failures",
+      "description": "As a user, I need actionable error messages instead of raw Go errors when tools fail.",
+      "acceptanceCriteria": [
+        "Create internal/tools/errors.go with a WrapToolError(toolName string, err error) string function",
+        "WrapToolError checks err.Error() for known patterns and returns helpful messages: 'context deadline exceeded' -> 'Command timed out. Increase with BU_BASH_TIMEOUT env var (current default: 120s)', 'permission denied' -> 'Permission denied. Check file permissions with ls -la', 'no such file or directory' -> 'File not found. Check the path and try again', 'connection refused' -> 'Connection refused. Is the server running?'",
+        "For unrecognized errors, return the original error message unchanged",
+        "In tools.go Execute(), wrap the returned error through WrapToolError before returning",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Implemented: errors.go with WrapToolError, Execute wraps via executeInner"
+    },
+    {
+      "id": "US-002",
+      "title": "Make maxTurns configurable via env var and command",
+      "description": "As a user, I need to control the maximum agent loop iterations to prevent runaway loops.",
+      "acceptanceCriteria": [
+        "In agent.go, change maxTurns from const to a field on Agent struct with default 100 (not 10000)",
+        "Check BU_MAX_TURNS environment variable in New() constructor, parse as int, use if valid",
+        "Add a SetMaxTurns(n int) method on Agent",
+        "In cmd/root.go, add /max-turns command: '/max-turns 50' sets the limit, '/max-turns' shows current value",
+        "Add /max-turns to readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Implemented: maxTurns field on Agent, BU_MAX_TURNS env, /max-turns command, default 100"
+    },
+    {
+      "id": "US-003",
+      "title": "Add session garbage collection command",
+      "description": "As a user, I want to clean up old sessions to prevent disk bloat.",
+      "acceptanceCriteria": [
+        "In internal/session/session.go, add a GarbageCollect(maxAgeDays int) (int, error) function that deletes session files older than maxAgeDays",
+        "In cmd/root.go, extend /sessions to support '/sessions gc' which deletes sessions older than 30 days",
+        "Also support '/sessions gc 7' to specify custom max age in days",
+        "Print how many sessions were deleted and total space freed",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Implemented: GarbageCollect in session.go, /sessions gc [days] command, formatBytes helper"
+    },
+    {
+      "id": "US-004",
+      "title": "Add tiered smart compaction strategy",
+      "description": "As a user, I want auto-compaction to remove less important messages first (tool results before user messages).",
+      "acceptanceCriteria": [
+        "In agent.go CompactToTokens, change the removal strategy: first pass removes 'tool' role messages from the oldest non-kept messages, second pass removes 'assistant' messages, third pass removes 'user' messages",
+        "Keep the existing minKeep=10 safeguard for the most recent messages",
+        "The summary string should indicate what types were removed: e.g. '3 tool results, 2 assistant responses'",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Implemented: tiered compaction (tool->assistant->user), type breakdown in summary"
+    },
+    {
+      "id": "US-005",
+      "title": "Add /compact dry-run mode",
+      "description": "As a user, I want to preview what messages would be removed before compacting.",
+      "acceptanceCriteria": [
+        "In agent.go, add a CompactDryRun(targetTokens int) []ollama.Message method that returns the messages that would be removed without actually removing them",
+        "In cmd/root.go, change /compact to support '/compact dry-run' which calls CompactDryRun and displays each message that would be removed with role, first 50 chars, and estimated token count",
+        "Plain '/compact' still performs the actual compaction as before",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Implemented: CompactDryRun method, /compact dry-run shows would-remove messages with token counts"
+    },
+    {
+      "id": "US-006",
+      "title": "Add --debug flag with structured logging",
+      "description": "As a developer, I need a debug mode to see API calls, tool invocations, and token usage in real time.",
+      "acceptanceCriteria": [
+        "Create internal/logging/logger.go with a global Debug bool and functions: Debugf(format string, args ...interface{}) that prints timestamped messages to stderr only when Debug is true",
+        "In cmd/root.go rootCmd, add --debug persistent flag that sets logging.Debug = true",
+        "Add Debugf calls in agent.go: before API call (model, message count, estimated tokens), after API response (token counts), before tool execution (tool name, args), after tool execution (result length, duration)",
+        "Debug output format: '[DEBUG 15:04:05] message'",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Implemented: internal/logging/logger.go, --debug flag, Debugf calls in agent for API calls and tool execution"
+    },
+    {
+      "id": "US-007",
+      "title": "Enhance system prompt with error recovery and token awareness",
+      "description": "As an AI model, I need system prompt guidance on how to handle failures and manage context budget.",
+      "acceptanceCriteria": [
+        "In agent.go enhancedSystemPrompt, add a '## Error Recovery' section: 'When a tool fails, read the error carefully. If it suggests a fix (like checking permissions or increasing timeout), try the suggested fix before retrying. Do not retry the same failing command more than once without changing something. If stuck, ask the user for help.'",
+        "Add a '## Context Management' section: 'Be concise in responses. Prefer short, targeted tool calls over reading entire files. When context is high (auto-compact warning appears), summarize recent work before continuing.'",
+        "Add a '## Process Management' section: 'When starting servers with start_server, always check if the port is already in use first. When running long commands with bash, prefer adding timeouts.'",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Implemented: Error Recovery, Context Management, Process Management sections in system prompt"
+    },
+    {
+      "id": "US-008",
+      "title": "Add process group management to bash tool",
+      "description": "As a user, I need bash commands to be properly killed (including child processes) when they timeout.",
+      "acceptanceCriteria": [
+        "In internal/tools/tools.go execBash, set cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} to create a process group",
+        "When the context is cancelled (timeout), kill the entire process group with syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) instead of just the parent",
+        "Add 'syscall' to imports in tools.go if not already present",
+        "Ensure the existing SysProcAttr on start_server is not affected",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Implemented: Setpgid + SIGKILL process group kill via cmd.Cancel"
+    },
+    {
+      "id": "US-009",
+      "title": "Add /checkpoint and /restore for conversation branching",
+      "description": "As a user, I want to save a snapshot of the current conversation state and restore it later if the agent goes down a wrong path.",
+      "acceptanceCriteria": [
+        "Add a 'checkpoints map[string][]ollama.Message' field to the Agent struct, initialized in New()",
+        "Add /checkpoint command: '/checkpoint fix-attempt' saves a deep copy of current messages under that name",
+        "Add /restore command: '/restore fix-attempt' replaces current messages with the saved checkpoint, resets token cache",
+        "'/checkpoint' with no args lists all saved checkpoints with message count and estimated tokens",
+        "Add /checkpoint and /restore to readline autocompleter and /help output",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "Implemented: checkpoints map, SaveCheckpoint/RestoreCheckpoint/Checkpoints methods, /checkpoint and /restore commands"
+    },
+    {
+      "id": "US-010",
+      "title": "Reduce Ollama client max retries and improve error messages",
+      "description": "As a user, I need faster failure and better error messages when the API is unreachable or model is loading.",
+      "acceptanceCriteria": [
+        "In internal/ollama/client.go ChatStream, reduce maxRetries from 3 to 1 for faster failure",
+        "Check for BU_API_RETRIES env var to make retries configurable (default 1)",
+        "Enhance ClassifyError to detect model loading patterns: if error contains 'loading' or response is slow (>30s before first token), add hint: 'Model may be loading. Try /retry in 30 seconds.'",
+        "When connection is refused, add hint: 'Is Ollama running? Start with: ollama serve'",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "Implemented: BU_API_RETRIES env var (default 1), classifyStreamError with loading/timeout hints"
+    },
+    {
+      "id": "US-011",
+      "title": "Add progressive output for long-running bash commands",
+      "description": "As a user, I want to see incremental output from bash commands instead of waiting for completion.",
+      "acceptanceCriteria": [
+        "In internal/tools/tools.go execBash, when the command runs for more than 3 seconds, start printing output lines to stderr in real-time (prefixed with dim color)",
+        "Cap real-time output to the last 20 lines shown (scrolling window), clearing previous lines with ANSI escapes",
+        "When the command completes, stop real-time output and return the full result as before",
+        "Only enable progressive output when os.Stderr is a terminal (check with term.IsTerminal)",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "Implemented: piped stdout with scanner, live dim output after 3s on TTY, line-by-line progress"
+    },
+    {
+      "id": "US-012",
+      "title": "Add tool argument validation before execution",
+      "description": "As a developer, I want invalid tool arguments to be caught early with clear error messages.",
+      "acceptanceCriteria": [
+        "In internal/tools/tools.go, add a ValidateArgs(toolName string, args map[string]interface{}) error function",
+        "For each tool with required parameters, check that they exist and are non-empty strings",
+        "For grep 'before'/'after' args, validate they are valid integers between 0 and 10",
+        "For edit_file, validate that 'old_string' and 'new_string' are present and old_string != new_string",
+        "Call ValidateArgs in agent.go executeTool before calling tools.Execute, return the error to the LLM if validation fails",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "Implemented: ValidateArgs function with per-tool validation, called in executeTool before Execute"
+    }
+  ]
+}

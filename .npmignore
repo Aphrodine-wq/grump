@@ -1,0 +1,16 @@
+# Source code (not needed in npm package)
+*.go
+go.mod
+go.sum
+cmd/
+internal/
+main.go
+
+# Build artifacts
+dist/
+bu-cli
+
+# Development
+.claude/
+ralph/
+scripts/build.sh
