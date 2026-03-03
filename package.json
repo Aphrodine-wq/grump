@@ -1,5 +1,5 @@
 {
-  "name": "@grump/cli",
+  "name": "@g-rump-cli/cli",
   "version": "2.0.0",
   "description": "AI-powered coding assistant CLI built on Ollama",
   "bin": {
