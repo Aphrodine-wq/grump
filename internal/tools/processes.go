@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -63,7 +62,7 @@ func ToolStartServer(args map[string]interface{}) (string, error) {
 
 	cmd := exec.Command("bash", "-c", command)
 	// Create a new process group so we can kill the whole tree (e.g. npm -> node)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setProcGroup(cmd)
 
 	outBuf := &safeBuf{}
 	cmd.Stdout = outBuf
@@ -168,12 +167,7 @@ func ToolStopServer(args map[string]interface{}) (string, error) {
 
 	if proc.Cmd.Process != nil {
 		// Kill the entire process group to ensure child processes (like node apps spawned by npm) die
-		pgid, err := syscall.Getpgid(proc.Cmd.Process.Pid)
-		if err == nil {
-			syscall.Kill(-pgid, syscall.SIGKILL)
-		} else {
-			proc.Cmd.Process.Kill()
-		}
+		killProcessGroup(proc.Cmd)
 	}
 
 	return fmt.Sprintf("Stopped background server [%d]: %s", id, proc.Command), nil
@@ -186,12 +180,7 @@ func StopAll() {
 
 	for id, proc := range processes {
 		if proc.Cmd.Process != nil {
-			pgid, err := syscall.Getpgid(proc.Cmd.Process.Pid)
-			if err == nil {
-				syscall.Kill(-pgid, syscall.SIGKILL)
-			} else {
-				proc.Cmd.Process.Kill()
-			}
+			killProcessGroup(proc.Cmd)
 		}
 		delete(processes, id)
 	}

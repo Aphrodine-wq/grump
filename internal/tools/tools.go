@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"golang.org/x/term"
@@ -688,13 +687,8 @@ func execBash(args map[string]interface{}) (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "bash", "-c", command)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process != nil {
-			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
-		return nil
-	}
+	setProcGroup(cmd)
+	cmd.Cancel = cancelProcess(cmd)
 
 	// Use pipes for progressive output
 	stdout, _ := cmd.StdoutPipe()
